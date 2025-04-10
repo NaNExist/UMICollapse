@@ -415,9 +415,10 @@ public class DeduplicateSAM{
                 @Override
                 protected void compute() {
                     try {
+                        System.out.println("Start task: " + alignment);
                         AlignReads alignReads = new AlignReads();
                         alignReads.umiRead = new HashMap<>();
-
+                        
                         for (SAMRecord record : records) {
                             Read read = new SAMRead(record);
                             BitSet umi = read.getUMI(umiLength);
@@ -455,6 +456,7 @@ public class DeduplicateSAM{
                         synchronized (DeduplicateSAM.class) {
                             align.remove(alignment);
                         }
+                        System.out.println("Finish task: " + alignment);
 
                     } catch (Exception e) {
                         e.printStackTrace();
@@ -462,7 +464,7 @@ public class DeduplicateSAM{
                 }
             });
         }
-
+        System.out.println("Ready To Work");
         // pool.invokeAll(tasks);
         tasks.forEach(ForkJoinTask::fork);
         tasks.forEach(ForkJoinTask::join);
