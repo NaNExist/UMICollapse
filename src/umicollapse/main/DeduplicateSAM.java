@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.stream.Stream;
 
 import java.io.File;
+import java.io.IOException;
 
 import umicollapse.util.BitSet;
 import umicollapse.data.*;
@@ -391,7 +392,12 @@ public class DeduplicateSAM{
             alignmentBuckets.computeIfAbsent(alignment, k2 -> new ArrayList<>()).add(record);
         }
 
-        reader.close();
+        try {
+            reader.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
 
         ForkJoinPool pool = new ForkJoinPool(); // 默认线程数 = CPU核心数
 
