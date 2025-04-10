@@ -398,6 +398,7 @@ public class DeduplicateSAM{
             e.printStackTrace();
         }
 
+        System.out.println("Closing Reader");
 
         ForkJoinPool pool = new ForkJoinPool(); // 默认线程数 = CPU核心数
 
@@ -450,6 +451,9 @@ public class DeduplicateSAM{
                             avgUMICount += alignReads.umiRead.size();
                             maxUMICount = Math.max(maxUMICount, alignReads.umiRead.size());
                             dedupedCount += deduped.size();
+                        }
+                        synchronized (DeduplicateSAM.class) {
+                            align.remove(alignment);
                         }
 
                     } catch (Exception e) {
@@ -553,6 +557,7 @@ public class DeduplicateSAM{
         // }catch(Exception e){
         //     e.printStackTrace();
         // }
+        System.out.println("Closing Writer");
 
         writer.close();
 
