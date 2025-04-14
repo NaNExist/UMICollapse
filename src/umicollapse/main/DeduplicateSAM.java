@@ -41,7 +41,14 @@ public class DeduplicateSAM{
 
     public void deduplicateAndMerge(File in, File out, Algo algo, Class<? extends Data> dataClass, Merge merge, int umiLengthParam, int k, float percentage, boolean parallel, String umiSeparator, boolean paired, boolean removeUnpaired, boolean removeChimeric, boolean keepUnmapped, boolean trackClusters){
         SAMRead.setDefaultUMIPattern(umiSeparator);
-
+        
+        // trackClusters=false;
+        // keepUnmapped=false;
+        // removeChimeric=false;
+        // removeUnpaired=false;
+        // paired=false;
+        // umiSeparator = "_";
+        // parallelAlign=false; // parallel=false;
         SamReader reader = SamReaderFactory.makeDefault().validationStringency(ValidationStringency.SILENT).open(in);
         Writer writer = new Writer(in, out, reader, paired);
         Map<Alignment, Map<BitSet, ReadFreq>> align = new HashMap<>(1 << 16);
@@ -151,6 +158,7 @@ public class DeduplicateSAM{
             parallel ? align.entrySet().parallelStream() : ((paired && !trackClusters) ? align.entrySet().stream().sorted((a, b) -> a.getKey().getRef().compareTo(b.getKey().getRef())) : align.entrySet().stream());
 
         stream.forEach(e -> {
+            System.out.println("Processing alignment " + e.getKey().toString() + " with " + e.getValue().size() + " reads");
             List<Read> deduped;
             Data data = null;
 
@@ -181,6 +189,7 @@ public class DeduplicateSAM{
                         writer.write(((SAMRead)read).toSAMRecord());
                 }
             }
+            System.out.println("Done processing alignment " + e.getKey().toString() + " with " + e.getValue().size() + " reads");
         });
 
         // second pass to tag reads with their cluster and other stats
