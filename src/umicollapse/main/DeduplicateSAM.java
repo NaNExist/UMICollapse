@@ -361,204 +361,98 @@ public class DeduplicateSAM{
         System.out.println("Done with the first pass!");
 
         SAMRead.setDefaultUMIPattern(umiSeparator);
-        
-        Map<Alignment, List<SAMRecord>> alignmentBuckets = new HashMap<>();
+
         SamReader reader = SamReaderFactory.makeDefault().validationStringency(ValidationStringency.SILENT).open(in);
 
-        for (SAMRecord record : reader) {
-            if (record.getReadUnmappedFlag()) continue;
-
-            if (paired && ((removeUnpaired && !record.getReadPairedFlag())
-                    || (record.getReadPairedFlag() && record.getSecondOfPairFlag())
-                    || (record.getReadPairedFlag() && record.getMateUnmappedFlag())
-                    || (removeChimeric && record.getReadPairedFlag()
-                        && !record.getReferenceName().equals(record.getMateReferenceName())))) {
-                continue;
-            }
-
-            Alignment alignment = paired ?
-                new PairedAlignment(
-                    record.getReadNegativeStrandFlag(),
-                    record.getReadNegativeStrandFlag() ? record.getUnclippedEnd() : record.getUnclippedStart(),
-                    record.getReferenceName(),
-                    record.getInferredInsertSize()
-                ) :
-                new Alignment(
-                    record.getReadNegativeStrandFlag(),
-                    record.getReadNegativeStrandFlag() ? record.getUnclippedEnd() : record.getUnclippedStart(),
-                    record.getReferenceName()
-                );
-
-            alignmentBuckets.computeIfAbsent(alignment, k2 -> new ArrayList<>()).add(record);
-        }
-
-        try {
-            reader.close();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-        System.out.println("Closing Reader");
-
-        ForkJoinPool pool = new ForkJoinPool(); // 默认线程数 = CPU核心数
-
-        List<RecursiveAction> tasks = new ArrayList<>();
+        umiLength = umiLengthParam;
+        int idx = 0;
+        int alignPosCount = align.size();
         avgUMICount = 0;
         maxUMICount = 0;
         dedupedCount = 0;
 
-        for (Map.Entry<Alignment, List<SAMRecord>> entry : alignmentBuckets.entrySet()) {
-            Alignment alignment = entry.getKey();
-            List<SAMRecord> records = entry.getValue();
+        for(SAMRecord record : reader){
+            if(record.getReadUnmappedFlag()) // discard unmapped reads
+                continue;
 
-            tasks.add(new RecursiveAction() {
-                @Override
-                protected void compute() {
-                    try {
-                        System.out.println("Start task: " + alignment);
-                        AlignReads alignReads = new AlignReads();
-                        alignReads.umiRead = new HashMap<>();
-                        
-                        for (SAMRecord record : records) {
-                            Read read = new SAMRead(record);
-                            BitSet umi = read.getUMI(umiLength);
+            if(paired && ((removeUnpaired && !record.getReadPairedFlag()) // discard unpaired
+                        || (record.getReadPairedFlag() && record.getSecondOfPairFlag()) // ignore reversed reads
+                        || (record.getReadPairedFlag() && record.getMateUnmappedFlag()) // discard unmapped reads
+                        || (removeChimeric && record.getReadPairedFlag()
+                            && !record.getReferenceName().equals(record.getMateReferenceName())))){ // discard chimeric reads
+                continue;
+            }
 
-                            if (umiLength == -1)
-                                umiLength = read.getUMILength();
+            Alignment alignment = null;
 
-                            if (alignReads.umiRead.containsKey(umi)) {
-                                ReadFreq prev = alignReads.umiRead.get(umi);
-                                prev.read = merge.merge(read, prev.read);
-                                prev.freq++;
-                            } else {
-                                alignReads.umiRead.put(umi, new ReadFreq(read, 1));
-                            }
-                        }
+            if(paired){
+                alignment = new PairedAlignment(
+                        record.getReadNegativeStrandFlag(),
+                        record.getReadNegativeStrandFlag() ? record.getUnclippedEnd() : record.getUnclippedStart(),
+                        record.getReferenceName(),
+                        record.getInferredInsertSize()
+                );
+            }else{
+                alignment = new Alignment(
+                        record.getReadNegativeStrandFlag(),
+                        record.getReadNegativeStrandFlag() ? record.getUnclippedEnd() : record.getUnclippedStart(),
+                        record.getReferenceName()
+                );
+            }
 
-                        Data data = dataClass.getDeclaredConstructor().newInstance();
-                        List<Read> deduped;
+            AlignReads alignReads = align.get(alignment);
 
-                        if (algo instanceof Algorithm)
-                            deduped = ((Algorithm) algo).apply(alignReads.umiRead, (DataStructure) data, new ClusterTracker(trackClusters), umiLength, k, percentage);
-                        else
-                            deduped = ((ParallelAlgorithm) algo).apply(alignReads.umiRead, (ParallelDataStructure) data, new ClusterTracker(trackClusters), umiLength, k, percentage);
+            if(alignReads.umiRead == null)
+                alignReads.umiRead = new HashMap<BitSet, ReadFreq>(4);
 
-                        synchronized (writer) {
-                            for (Read r : deduped)
-                                writer.write(((SAMRead) r).toSAMRecord());
-                        }
+            Read read = new SAMRead(record);
+            BitSet umi = read.getUMI(umiLength);
 
-                        synchronized (DeduplicateSAM.class) {
-                            avgUMICount += alignReads.umiRead.size();
-                            maxUMICount = Math.max(maxUMICount, alignReads.umiRead.size());
-                            dedupedCount += deduped.size();
-                        }
-                        synchronized (DeduplicateSAM.class) {
-                            align.remove(alignment);
-                        }
-                        System.out.println("Finish task: " + alignment);
+            if(umiLength == -1)
+                umiLength = read.getUMILength();
 
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
+            if(alignReads.umiRead.containsKey(umi)){
+                ReadFreq prev = alignReads.umiRead.get(umi);
+                prev.read = merge.merge(read, prev.read);
+                prev.freq++;
+            }else{
+                alignReads.umiRead.put(umi, new ReadFreq(read, 1));
+            }
+
+            if(idx >= alignReads.latest){
+                List<Read> deduped;
+                Data data = null;
+
+                try{
+                    data = dataClass.getDeclaredConstructor().newInstance();
+                }catch(Exception ex){
+                    ex.printStackTrace();
                 }
-            });
+
+                if(algo instanceof Algorithm)
+                    deduped = ((Algorithm)algo).apply(alignReads.umiRead, (DataStructure)data, new ClusterTracker(trackClusters), umiLength, k, percentage);
+                else
+                    deduped = ((ParallelAlgorithm)algo).apply(alignReads.umiRead, (ParallelDataStructure)data, new ClusterTracker(trackClusters), umiLength, k, percentage);
+
+                avgUMICount += alignReads.umiRead.size();
+                maxUMICount = Math.max(maxUMICount, alignReads.umiRead.size());
+                dedupedCount += deduped.size();
+
+                for(Read r : deduped)
+                    writer.write(((SAMRead)r).toSAMRecord());
+
+                // done with the current alignment position, so free up memory
+                align.remove(alignment);
+            }
+
+            idx++;
         }
-        System.out.println("Ready To Work");
-        // pool.invokeAll(tasks);
-        tasks.forEach(ForkJoinTask::fork);
-        tasks.forEach(ForkJoinTask::join);
-        // SamReader reader = SamReaderFactory.makeDefault().validationStringency(ValidationStringency.SILENT).open(in);
 
-        // umiLength = umiLengthParam;
-        // int idx = 0;
-        // int alignPosCount = align.size();
-        // avgUMICount = 0;
-        // maxUMICount = 0;
-        // dedupedCount = 0;
-
-        // for(SAMRecord record : reader){
-        //     if(record.getReadUnmappedFlag()) // discard unmapped reads
-        //         continue;
-
-        //     if(paired && ((removeUnpaired && !record.getReadPairedFlag()) // discard unpaired
-        //                 || (record.getReadPairedFlag() && record.getSecondOfPairFlag()) // ignore reversed reads
-        //                 || (record.getReadPairedFlag() && record.getMateUnmappedFlag()) // discard unmapped reads
-        //                 || (removeChimeric && record.getReadPairedFlag()
-        //                     && !record.getReferenceName().equals(record.getMateReferenceName())))){ // discard chimeric reads
-        //         continue;
-        //     }
-
-        //     Alignment alignment = null;
-
-        //     if(paired){
-        //         alignment = new PairedAlignment(
-        //                 record.getReadNegativeStrandFlag(),
-        //                 record.getReadNegativeStrandFlag() ? record.getUnclippedEnd() : record.getUnclippedStart(),
-        //                 record.getReferenceName(),
-        //                 record.getInferredInsertSize()
-        //         );
-        //     }else{
-        //         alignment = new Alignment(
-        //                 record.getReadNegativeStrandFlag(),
-        //                 record.getReadNegativeStrandFlag() ? record.getUnclippedEnd() : record.getUnclippedStart(),
-        //                 record.getReferenceName()
-        //         );
-        //     }
-
-        //     AlignReads alignReads = align.get(alignment);
-
-        //     if(alignReads.umiRead == null)
-        //         alignReads.umiRead = new HashMap<BitSet, ReadFreq>(4);
-
-        //     Read read = new SAMRead(record);
-        //     BitSet umi = read.getUMI(umiLength);
-
-        //     if(umiLength == -1)
-        //         umiLength = read.getUMILength();
-
-        //     if(alignReads.umiRead.containsKey(umi)){
-        //         ReadFreq prev = alignReads.umiRead.get(umi);
-        //         prev.read = merge.merge(read, prev.read);
-        //         prev.freq++;
-        //     }else{
-        //         alignReads.umiRead.put(umi, new ReadFreq(read, 1));
-        //     }
-
-        //     if(idx >= alignReads.latest){
-        //         List<Read> deduped;
-        //         Data data = null;
-
-        //         try{
-        //             data = dataClass.getDeclaredConstructor().newInstance();
-        //         }catch(Exception ex){
-        //             ex.printStackTrace();
-        //         }
-
-        //         if(algo instanceof Algorithm)
-        //             deduped = ((Algorithm)algo).apply(alignReads.umiRead, (DataStructure)data, new ClusterTracker(trackClusters), umiLength, k, percentage);
-        //         else
-        //             deduped = ((ParallelAlgorithm)algo).apply(alignReads.umiRead, (ParallelDataStructure)data, new ClusterTracker(trackClusters), umiLength, k, percentage);
-
-        //         avgUMICount += alignReads.umiRead.size();
-        //         maxUMICount = Math.max(maxUMICount, alignReads.umiRead.size());
-        //         dedupedCount += deduped.size();
-
-        //         for(Read r : deduped)
-        //             writer.write(((SAMRead)r).toSAMRecord());
-
-        //         // done with the current alignment position, so free up memory
-        //         align.remove(alignment);
-        //     }
-
-        //     idx++;
-        // }
-
-        // try{
-        //     reader.close();
-        // }catch(Exception e){
-        //     e.printStackTrace();
-        // }
+        try{
+            reader.close();
+        }catch(Exception e){
+            e.printStackTrace();
+        }
         System.out.println("Closing Writer");
 
         writer.close();
@@ -572,8 +466,8 @@ public class DeduplicateSAM{
         }
 
         System.out.println("Number of unremoved reads\t" + readCount);
-        // System.out.println("Number of unique alignment positions\t" + alignPosCount);
-        // System.out.println("Average number of UMIs per alignment position\t" + ((double)avgUMICount / alignPosCount));
+        System.out.println("Number of unique alignment positions\t" + alignPosCount);
+        System.out.println("Average number of UMIs per alignment position\t" + ((double)avgUMICount / alignPosCount));
         System.out.println("Max number of UMIs over all alignment positions\t" + maxUMICount);
         System.out.println("Number of reads after deduplicating\t" + dedupedCount);
     }
