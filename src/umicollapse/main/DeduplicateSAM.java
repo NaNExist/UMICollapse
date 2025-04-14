@@ -153,10 +153,10 @@ public class DeduplicateSAM{
         Object lock = new Object();
 
         final Map<Alignment, ClusterTracker> clusterTrackers = trackClusters ? new HashMap<Alignment, ClusterTracker>() : null;
-
+        System.out.println("Starting deduplication with " + alignPosCount + " alignments and " + totalReadCount + " reads");
         Stream<Map.Entry<Alignment, Map<BitSet, ReadFreq>>> stream =
             parallel ? align.entrySet().parallelStream() : ((paired && !trackClusters) ? align.entrySet().stream().sorted((a, b) -> a.getKey().getRef().compareTo(b.getKey().getRef())) : align.entrySet().stream());
-
+        System.out.println("Stream created");
         stream.forEach(e -> {
             System.out.println("Processing alignment " + e.getKey().toString() + " with " + e.getValue().size() + " reads");
             List<Read> deduped;
