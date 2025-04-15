@@ -51,7 +51,7 @@ public class DeduplicateSAM{
         // parallelAlign=false; // parallel=false;
         SamReader reader = SamReaderFactory.makeDefault().validationStringency(ValidationStringency.SILENT).open(in);
         Writer writer = new Writer(in, out, reader, paired);
-        Map<Alignment, Map<BitSet, ReadFreq>> align = new HashMap<>(1 << 16);
+        Map<Alignment, Map<BitSet, ReadFreq>> align = new HashMap<>(1 << 24);
 
         umiLength = umiLengthParam;
         int totalReadCount = 0;
@@ -379,6 +379,8 @@ public class DeduplicateSAM{
         avgUMICount = 0;
         maxUMICount = 0;
         dedupedCount = 0;
+        
+        System.out.println("Starting Second Pass with " + alignPosCount + " alignments and " + totalReadCount + " reads");
 
         for(SAMRecord record : reader){
             if(record.getReadUnmappedFlag()) // discard unmapped reads

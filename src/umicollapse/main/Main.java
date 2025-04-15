@@ -126,7 +126,7 @@ public class Main{
         if(m.containsKey(s)){
             System.setProperty("java.util.concurrent.ForkJoinPool.common.parallelism", (Integer.parseInt(m.get(s).get(0)) - 1) + "");
             parallelAlign = true;
-            parallelData = true;
+            parallelData = false;
         }
 
         s = "-T";
